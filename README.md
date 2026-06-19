@@ -29,18 +29,24 @@ Returns 0 on success, -1 if the string is not in the supported grammar.
 - `[now] [+|-] N UNIT ... [ago|hence]` — `UNIT` is sec/min/hour/day/week/
   fortnight/month/year (and plurals). `ago`/`hence` bind to the preceding unit,
   so `3 days 2 hours ago` is `+3d −2h` (matching gnulib).
-- `[next|last|this] WEEKDAY` — day of week, resolved with gnulib's ordinal rule.
+- `[next|last|this|first..twelfth] WEEKDAY` — day of week, resolved with
+  gnulib's ordinal rule.
 - `Month D[, Y]` / `D Month [Y]` — month-name dates (English, case-insensitive,
   abbreviations; year defaults to the current year).
-- `HH:MM[:SS]` — a time of day (today).
-- Combinations: `yesterday 10:00`, `Mar 15 2020 14:30`, `next fri 9:00`.
+- `M/D/Y` / `Y/M/D` — numeric slash dates (2- or 4-digit year, optional time).
+- `HH:MM[:SS]`, `Nam`/`Npm`/`N:MMpm` — time of day (today), 12-hour clock.
+- Timezones: numeric offsets (`+0500`, `-0730`) and `UTC`/`GMT`/`UT`/`Z`.
+- Combinations: `yesterday 10:00`, `Mar 15 2020 2:30pm`, `next fri 9:00`,
+  `3/15/2020 06:00 +0500`.
 
-Offsets use `tm` + `mktime`, so month/year arithmetic and DST behave like find.
-Month and weekday names are English regardless of locale, as find's are.
+Offsets use `tm` + `mktime`, so month/year arithmetic and DST behave like find;
+an explicit timezone resolves via `timegm` minus the offset. Month and weekday
+names are English regardless of locale, as find's are.
 
-Not (yet) covered, where it returns -1: timezone words and numeric offsets
-(`EST`, `+0500`), 2-digit years, numeric `M/D/Y` dates, AM/PM, and ordinal
-day-counts (`3rd`).
+Returns -1 (matching find, which rejects most of these too): named timezones
+beyond UTC/GMT (`EST`, `PDT`), dashed/dotted numeric dates (`3-15-2020`,
+`15.03.2020`), ordinal days of month (`March 3rd`), 2-digit years in month-name
+dates (`March 15 20`), and the rest of gnulib's long tail.
 
 ## Build
 

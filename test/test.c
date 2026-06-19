@@ -128,6 +128,29 @@ int main(void)
 	onwday("next friday", 5);
 	onwday("last sunday", 0);
 	onwday("this wednesday", 3);
+	onwday("first monday", 1);   /* spelled-out ordinal weekday */
+	onwday("third tuesday", 2);
+
+	/* numeric slash dates (M/D/Y and Y/M/D; 2-digit year; optional time) */
+	eq("3/15/2020", ymd(2020, 3, 15, 0, 0, 0));
+	eq("03/15/2020", ymd(2020, 3, 15, 0, 0, 0));
+	eq("2020/03/15", ymd(2020, 3, 15, 0, 0, 0));
+	eq("3/15/20", ymd(2020, 3, 15, 0, 0, 0));
+	eq("2020/3/15 12:00", ymd(2020, 3, 15, 12, 0, 0));
+
+	/* AM/PM (12am = 00:00, 12pm = 12:00, else +12 for pm) */
+	eq("March 15 2020 6am", ymd(2020, 3, 15, 6, 0, 0));
+	eq("March 15 2020 6pm", ymd(2020, 3, 15, 18, 0, 0));
+	eq("March 15 2020 2:30pm", ymd(2020, 3, 15, 14, 30, 0));
+	eq("March 15 2020 12am", ymd(2020, 3, 15, 0, 0, 0));
+	eq("March 15 2020 12pm", ymd(2020, 3, 15, 12, 0, 0));
+
+	/* timezones (offset applied; UTC/GMT = 0). NOW's TZ is UTC0 here, so a
+	 * tz-less time at 06:00 also lands at 06:00 UTC — the offsets distinguish. */
+	eq("March 15 2020 06:00 UTC", ymd(2020, 3, 15, 6, 0, 0));
+	eq("March 15 2020 06:00 GMT", ymd(2020, 3, 15, 6, 0, 0));
+	eq("March 15 2020 06:00 +0500", ymd(2020, 3, 15, 1, 0, 0));   /* 06:00 in +0500 = 01:00 UTC */
+	eq("March 15 2020 06:00 -0730", ymd(2020, 3, 15, 13, 30, 0)); /* 06:00 in -0730 = 13:30 UTC */
 
 	/* rejects (out of subset or malformed) */
 	bad("garbage");
@@ -138,6 +161,12 @@ int main(void)
 	bad("next foo");
 	bad("");
 	bad("25:00");
+	bad("3-15-2020");   /* dashes are ISO-only (Y-M-D); M-D-Y not accepted */
+	bad("15.03.2020");  /* dotted dates not accepted */
+	bad("3rd");         /* bare ordinal */
+	bad("March 3rd 2020"); /* ordinal day-of-month (find rejects too) */
+	bad("March 15 2020 06:00 EST"); /* named zone beyond UTC/GMT */
+	bad("March 15 2020 13pm");      /* invalid 12-hour clock value */
 
 	printf("frtdate: %d checks, %d failed\n", checks, fails);
 	return fails ? 1 : 0;

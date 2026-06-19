@@ -41,6 +41,33 @@ static int weekday_name(const char *w)
 	return -1;
 }
 
+/* Spelled-out ordinal (first..twelfth), 1..12, or 0. Used as a day-of-week
+ * count ("first monday"); gnulib also has "next/last/this" (handled inline). */
+static int ordinal_word(const char *w)
+{
+	static const char *o[] = {"first", "second", "third", "fourth", "fifth",
+				  "sixth", "seventh", "eighth", "ninth", "tenth",
+				  "eleventh", "twelfth"};
+	for (int i = 0; i < 12; i++)
+		if (strcmp(w, o[i]) == 0)
+			return i + 1;
+	return 0;
+}
+
+/* A named timezone we honor: returns 1 and sets *off (seconds east of UTC) for
+ * UTC/GMT/UT/Z. Other abbreviations (EST, PDT, ...) are deliberately out of
+ * scope — gnulib's table is large and its behavior here is inconsistent (find
+ * 4.10.0 rejects "EST"); numeric offsets (+0500) cover the portable need. */
+static int zone_name(const char *w, int *off)
+{
+	if (strcmp(w, "utc") == 0 || strcmp(w, "gmt") == 0 || strcmp(w, "ut") == 0 ||
+	    strcmp(w, "z") == 0) {
+		*off = 0;
+		return 1;
+	}
+	return 0;
+}
+
 /* A relative-date unit: which tm field it adjusts and a day-count multiplier
  * (week/fortnight fold onto tm_mday). Returns 1 if `w` names a unit. */
 static int reldate_unit(const char *w, int *field, long long *mult)
@@ -86,8 +113,9 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 	int have_time = 0, t_hour = 0, t_min = 0, t_sec = 0;
 	int have_wday = 0, wday_num = 0;
 	long long wday_ord = 0; /* this/bare=0, next=+1, last=-1 */
-	int pend_ord = 0;       /* a next/last/this awaiting its weekday */
+	int pend_ord = 0;       /* a next/last/this/ordinal awaiting its weekday */
 	long long pend_ord_val = 0;
+	int have_tz = 0, tz_off = 0; /* explicit timezone, seconds east of UTC */
 	const char *p = s;
 
 	while (*p) {
@@ -97,6 +125,21 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 			break;
 		unsigned char c = (unsigned char)*p;
 		if (c == '+' || c == '-') {
+			/* A numeric timezone offset [+-]HHMM follows a time (e.g.
+			 * "06:00 +0500"); 4 digits not followed by another digit. */
+			if (have_time && !have_tz && isdigit((unsigned char)p[1]) &&
+			    isdigit((unsigned char)p[2]) && isdigit((unsigned char)p[3]) &&
+			    isdigit((unsigned char)p[4]) && !isdigit((unsigned char)p[5])) {
+				int hh = (p[1] - '0') * 10 + (p[2] - '0');
+				int mm = (p[3] - '0') * 10 + (p[4] - '0');
+				if (hh > 23 || mm > 59)
+					return -1;
+				tz_off = (c == '-' ? -1 : 1) * (hh * 3600 + mm * 60);
+				have_tz = 1;
+				any = 1;
+				p += 5;
+				continue;
+			}
 			sign = (c == '-') ? -1 : 1;
 			p++;
 			continue;
@@ -138,6 +181,40 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 				any = 1;
 				continue;
 			}
+			if (*end == '/') { /* numeric slash date: M/D/Y or Y/M/D */
+				if (abs_mon || nfree > 0 || have_num)
+					return -1; /* a date/number already pending */
+				char *q = end + 1;
+				if (!isdigit((unsigned char)*q))
+					return -1;
+				long long n2 = strtoll(q, &q, 10);
+				if (*q != '/' || !isdigit((unsigned char)q[1]))
+					return -1;
+				q++;
+				long long n3 = strtoll(q, &q, 10);
+				p = q;
+				int mon, day;
+				long long yr;
+				if (v > 31) { /* Y/M/D */
+					yr = v;
+					mon = (int)n2;
+					day = (int)n3;
+				} else { /* M/D/Y (find takes slashes this way; dashes are ISO only) */
+					mon = (int)v;
+					day = (int)n2;
+					yr = n3;
+				}
+				if (yr < 100) /* 2-digit year, gnulib's split */
+					yr += (yr < 69) ? 2000 : 1900;
+				if (mon < 1 || mon > 12 || day < 1 || day > 31 ||
+				    yr < 1000 || yr > 9999)
+					return -1;
+				abs_mon = mon;
+				freenum[nfree++] = day;
+				freenum[nfree++] = yr;
+				any = 1;
+				continue;
+			}
 			if (have_num) { /* flush the previous free number (e.g. "15 2020") */
 				if (nfree >= 4)
 					return -1;
@@ -162,7 +239,7 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 				p++;
 			}
 			w[n] = '\0';
-			int field, mon, wd;
+			int field, mon, wd, ord = 0, zoff;
 			long long mult;
 			if (reldate_unit(w, &field, &mult)) {
 				if (!have_num)
@@ -196,13 +273,42 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 				last_amt = 1;
 				any = 1;
 			} else if (strcmp(w, "next") == 0 || strcmp(w, "last") == 0 ||
-				   strcmp(w, "this") == 0) {
+				   strcmp(w, "this") == 0 || (ord = ordinal_word(w)) > 0) {
+				/* a day-of-week ordinal: next/last/this, or first..twelfth */
 				if (pend_ord || have_num)
 					return -1;
 				pend_ord = 1;
 				pend_ord_val = (strcmp(w, "next") == 0)   ? 1
 					       : (strcmp(w, "last") == 0) ? -1
-									  : 0;
+					       : (strcmp(w, "this") == 0) ? 0
+									  : ord;
+			} else if (strcmp(w, "am") == 0 || strcmp(w, "pm") == 0) {
+				int pm = (w[0] == 'p');
+				int h;
+				if (have_time) {
+					h = t_hour;
+				} else if (have_num && num >= 1 && num <= 12) {
+					h = (int)num; /* bare hour, e.g. "6am" */
+					t_min = t_sec = 0;
+					have_num = 0;
+					have_time = 1;
+				} else {
+					return -1;
+				}
+				if (h < 1 || h > 12) /* 12-hour clock */
+					return -1;
+				if (pm && h != 12)
+					h += 12;
+				else if (!pm && h == 12)
+					h = 0;
+				t_hour = h;
+				any = 1;
+			} else if (zone_name(w, &zoff)) {
+				if (have_tz)
+					return -1;
+				tz_off = zoff;
+				have_tz = 1;
+				any = 1;
 			} else if ((wd = weekday_name(w)) >= 0) {
 				if (have_wday || have_num)
 					return -1;
@@ -237,7 +343,7 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 		return -1;
 
 	/* Plain now/today with nothing else: origin verbatim (keep sub-second). */
-	int has_abs = abs_mon || have_wday || have_time || nfree > 0;
+	int has_abs = abs_mon || have_wday || have_time || have_tz || nfree > 0;
 	int has_rel = 0;
 	for (int k = 0; k < 6; k++)
 		has_rel |= (off[k] != 0);
@@ -303,9 +409,19 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 		tm.tm_isdst = -1;
 	}
 
-	time_t t = mktime(&tm);
-	if (t == (time_t)-1)
-		return -1;
+	time_t t;
+	if (have_tz) {
+		/* Fields are a wall clock in the given zone: interpret as UTC, then
+		 * shift by the zone's offset to get the actual instant. */
+		t = timegm(&tm);
+		if (t == (time_t)-1)
+			return -1;
+		t -= tz_off;
+	} else {
+		t = mktime(&tm);
+		if (t == (time_t)-1)
+			return -1;
+	}
 	*sec = t;
 	*nsec = 0;
 	return 0;
