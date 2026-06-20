@@ -50,6 +50,23 @@ static void bad(const char *s)
 	}
 }
 
+/* Like eq() but also checks the nanosecond field (for fractional seconds). */
+static void eqn(const char *s, long long wsec, long wnsec)
+{
+	struct timespec out;
+	checks++;
+	if (frt_datetime_parse(s, NOW, &out) != 0) {
+		printf("FAIL [%s]: rejected\n", s);
+		fails++;
+		return;
+	}
+	if ((long long)out.tv_sec != wsec || out.tv_nsec != wnsec) {
+		printf("FAIL [%s]: got %lld.%09ld want %lld.%09ld\n", s, (long long)out.tv_sec,
+		       out.tv_nsec, wsec, wnsec);
+		fails++;
+	}
+}
+
 /* Verify the result lands on weekday `wd` (0=Sun) without hardcoding the date. */
 static void onwday(const char *s, int wd)
 {
@@ -167,6 +184,30 @@ int main(void)
 	bad("March 3rd 2020"); /* ordinal day-of-month (find rejects too) */
 	bad("March 15 2020 06:00 EST"); /* named zone beyond UTC/GMT */
 	bad("March 15 2020 13pm");      /* invalid 12-hour clock value */
+
+	/* ISO 8601 variants: T separator, no-seconds, compact, fractional, tz */
+	eq("2020-03-15T12:00:00", ymd(2020, 3, 15, 12, 0, 0));
+	eq("2020-03-15T18:00", ymd(2020, 3, 15, 18, 0, 0));
+	eq("20200315", ymd(2020, 3, 15, 0, 0, 0));
+	eq("20200315 18:00", ymd(2020, 3, 15, 18, 0, 0));
+	eqn("2020-03-15 12:00:00.5", ymd(2020, 3, 15, 12, 0, 0), 500000000L);
+	eq("2020-03-15T06:00:00Z", ymd(2020, 3, 15, 6, 0, 0));
+	eq("2020-03-15T06:00:00+05:00", ymd(2020, 3, 15, 1, 0, 0));  /* 06:00 +05 = 01 UTC */
+	eq("2020-03-15 06:00 -05:00", ymd(2020, 3, 15, 11, 0, 0));   /* 06:00 -05 = 11 UTC */
+
+	/* next/last/this + UNIT, and bare UNIT = 1 (NOW = Tue 2021-06-15 12:00) */
+	eq("next week", ymd(2021, 6, 22, 12, 0, 0));
+	eq("last week", ymd(2021, 6, 8, 12, 0, 0));
+	eq("this week", NOW.tv_sec);
+	eq("last month", ymd(2021, 5, 15, 12, 0, 0));
+	eq("next year", ymd(2022, 6, 15, 12, 0, 0));
+	eq("week ago", ymd(2021, 6, 8, 12, 0, 0));
+	eq("day ago", ymd(2021, 6, 14, 12, 0, 0));
+	eq("hour ago", NOW.tv_sec - 3600);
+
+	bad("a week ago");  /* find's "a" -> midnight quirk, not replicated */
+	bad("an hour ago"); /* find rejects "an" too */
+	bad("2020");        /* find reads a bare 4-digit as HH:MM; we don't */
 
 	printf("frtdate: %d checks, %d failed\n", checks, fails);
 	return fails ? 1 : 0;

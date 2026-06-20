@@ -24,29 +24,34 @@ Returns 0 on success, -1 if the string is not in the supported grammar.
 ## Grammar
 
 - `@EPOCH` — seconds since the Unix epoch.
-- `YYYY-MM-DD` / `YYYY-MM-DD HH:MM:SS` — ISO 8601, local time.
+- ISO 8601: `YYYY-MM-DD` or compact `YYYYMMDD`; optional ` `/`T` then
+  `HH:MM[:SS[.frac]]`; optional `Z` or `±HH[:]MM` offset. Local time unless a
+  zone is given.
 - `now`, `today`, `yesterday`, `tomorrow`.
 - `[now] [+|-] N UNIT ... [ago|hence]` — `UNIT` is sec/min/hour/day/week/
-  fortnight/month/year (and plurals). `ago`/`hence` bind to the preceding unit,
-  so `3 days 2 hours ago` is `+3d −2h` (matching gnulib).
-- `[next|last|this|first..twelfth] WEEKDAY` — day of week, resolved with
-  gnulib's ordinal rule.
+  fortnight/month/year (and plurals); a bare unit means one (`week ago`).
+  `ago`/`hence` bind to the preceding unit, so `3 days 2 hours ago` is `+3d −2h`.
+- `[next|last|this] UNIT` — `next week`, `last month`, `this year`.
+- `[next|last|this|first..twelfth] WEEKDAY` — day of week, gnulib's ordinal rule.
 - `Month D[, Y]` / `D Month [Y]` — month-name dates (English, case-insensitive,
   abbreviations; year defaults to the current year).
 - `M/D/Y` / `Y/M/D` — numeric slash dates (2- or 4-digit year, optional time).
 - `HH:MM[:SS]`, `Nam`/`Npm`/`N:MMpm` — time of day (today), 12-hour clock.
-- Timezones: numeric offsets (`+0500`, `-0730`) and `UTC`/`GMT`/`UT`/`Z`.
+- Timezones: numeric offsets (`+0500`, `+05:00`, `-0730`) and `UTC`/`GMT`/`UT`/`Z`.
 - Combinations: `yesterday 10:00`, `Mar 15 2020 2:30pm`, `next fri 9:00`,
-  `3/15/2020 06:00 +0500`.
+  `2020-03-15T06:00:00+05:00`.
 
 Offsets use `tm` + `mktime`, so month/year arithmetic and DST behave like find;
 an explicit timezone resolves via `timegm` minus the offset. Month and weekday
 names are English regardless of locale, as find's are.
 
 Returns -1 (matching find, which rejects most of these too): named timezones
-beyond UTC/GMT (`EST`, `PDT`), dashed/dotted numeric dates (`3-15-2020`,
-`15.03.2020`), ordinal days of month (`March 3rd`), 2-digit years in month-name
-dates (`March 15 20`), and the rest of gnulib's long tail.
+beyond UTC/GMT (`EST`, `PDT` — gnulib's full table interacts with the local zone,
+not portably reproducible), dashed/dotted numeric dates, ordinal days of month
+(`March 3rd`), 2-digit years in month-name dates (`March 15 20`), a bare 4-digit
+number as a clock time (`2020` → 20:20), and the `a`/`an` article (`a week ago`,
+which gnulib resolves to midnight). These are the quirky tail; the common forms
+are all covered.
 
 ## Build
 

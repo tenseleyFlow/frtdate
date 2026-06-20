@@ -242,9 +242,16 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 			int field, mon, wd, ord = 0, zoff;
 			long long mult;
 			if (reldate_unit(w, &field, &mult)) {
-				if (!have_num)
-					return -1; /* unit with no count */
-				long long amt = sign * num * mult;
+				long long cnt;
+				if (have_num) {
+					cnt = sign * num;
+				} else if (pend_ord) {
+					cnt = pend_ord_val; /* "next week", "last month" */
+					pend_ord = 0;
+				} else {
+					cnt = 1; /* a bare unit means one ("week ago" = 1 week ago) */
+				}
+				long long amt = cnt * mult;
 				off[field] += amt;
 				last_field = field;
 				last_amt = amt;
@@ -427,6 +434,129 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 	return 0;
 }
 
+/* Read exactly n decimal digits into *out, advancing *pp. Returns 1 on success. */
+static int rd_digits(const char **pp, int n, int *out)
+{
+	const char *p = *pp;
+	int v = 0;
+	for (int i = 0; i < n; i++) {
+		if (!isdigit((unsigned char)p[i]))
+			return 0;
+		v = v * 10 + (p[i] - '0');
+	}
+	*pp = p + n;
+	*out = v;
+	return 1;
+}
+
+/* ISO-8601-ish absolute timestamp:
+ *   (YYYY-MM-DD | YYYYMMDD) [( |T)HH:MM[:SS[.frac]]] [ [ ](Z | +HH[:]MM | -HH[:]MM)]
+ * Local time unless a zone is given (then timegm minus the offset). 0/-1. */
+static int parse_iso(const char *s, long long *sec, long *nsec)
+{
+	const char *p = s;
+	int y, mo, d;
+	if (!rd_digits(&p, 4, &y))
+		return -1;
+	if (*p == '-') {
+		p++;
+		if (!rd_digits(&p, 2, &mo) || *p != '-')
+			return -1;
+		p++;
+		if (!rd_digits(&p, 2, &d))
+			return -1;
+	} else if (rd_digits(&p, 4, &mo)) { /* compact YYYYMMDD: mo holds MMDD */
+		d = mo % 100;
+		mo = mo / 100;
+	} else {
+		return -1; /* a bare year is not an ISO date here */
+	}
+	if (mo < 1 || mo > 12 || d < 1 || d > 31)
+		return -1;
+
+	int hh = 0, mi = 0, ss = 0, have_tz = 0;
+	long frac = 0, tz = 0;
+
+	/* optional time, separated by a space or T */
+	if (*p == ' ' || *p == 'T' || *p == 't') {
+		const char *q = p + 1;
+		int h, m;
+		if (rd_digits(&q, 2, &h) && *q == ':') {
+			q++;
+			if (!rd_digits(&q, 2, &m))
+				return -1;
+			hh = h;
+			mi = m;
+			if (*q == ':') {
+				q++;
+				if (!rd_digits(&q, 2, &ss))
+					return -1;
+				if (*q == '.') { /* fractional seconds -> ns */
+					q++;
+					if (!isdigit((unsigned char)*q))
+						return -1;
+					long mult = 100000000L;
+					while (isdigit((unsigned char)*q)) {
+						if (mult)
+							frac += (*q - '0') * mult;
+						mult /= 10;
+						q++;
+					}
+				}
+			}
+			p = q; /* consumed a time; else leave p for the tz check */
+		}
+	}
+	if (hh > 23 || mi > 59 || ss > 60)
+		return -1;
+
+	/* optional timezone */
+	while (*p == ' ')
+		p++;
+	if (*p == 'Z' || *p == 'z') {
+		have_tz = 1;
+		p++;
+	} else if (*p == '+' || *p == '-') {
+		int sgn = (*p == '-') ? -1 : 1;
+		int th, tmn;
+		p++;
+		if (!rd_digits(&p, 2, &th))
+			return -1;
+		if (*p == ':')
+			p++;
+		if (!rd_digits(&p, 2, &tmn) || th > 23 || tmn > 59)
+			return -1;
+		tz = sgn * (th * 3600 + tmn * 60);
+		have_tz = 1;
+	}
+	if (*p != '\0')
+		return -1; /* trailing junk */
+
+	struct tm tm;
+	memset(&tm, 0, sizeof tm);
+	tm.tm_year = y - 1900;
+	tm.tm_mon = mo - 1;
+	tm.tm_mday = d;
+	tm.tm_hour = hh;
+	tm.tm_min = mi;
+	tm.tm_sec = ss;
+	tm.tm_isdst = -1;
+	time_t t;
+	if (have_tz) {
+		t = timegm(&tm);
+		if (t == (time_t)-1)
+			return -1;
+		t -= tz;
+	} else {
+		t = mktime(&tm);
+		if (t == (time_t)-1)
+			return -1;
+	}
+	*sec = t;
+	*nsec = frac;
+	return 0;
+}
+
 int frt_datetime_parse(const char *s, struct timespec now, struct timespec *out)
 {
 	if (!s)
@@ -445,26 +575,14 @@ int frt_datetime_parse(const char *s, struct timespec now, struct timespec *out)
 		return 0;
 	}
 
-	struct tm tm; /* ISO 8601 */
-	memset(&tm, 0, sizeof tm);
-	tm.tm_isdst = -1;
-	char *r = strptime(s, "%Y-%m-%d %H:%M:%S", &tm);
-	if (!r || *r) {
-		memset(&tm, 0, sizeof tm);
-		tm.tm_isdst = -1;
-		r = strptime(s, "%Y-%m-%d", &tm);
-		if (!r || *r) {
-			if (parse_rel(s, now, &sec, &nsec) != 0)
-				return -1;
-			out->tv_sec = (time_t)sec;
-			out->tv_nsec = nsec;
-			return 0;
-		}
+	if (parse_iso(s, &sec, &nsec) == 0) { /* ISO 8601 and its variants */
+		out->tv_sec = (time_t)sec;
+		out->tv_nsec = nsec;
+		return 0;
 	}
-	time_t t = mktime(&tm);
-	if (t == (time_t)-1)
+	if (parse_rel(s, now, &sec, &nsec) != 0) /* named / relative grammar */
 		return -1;
-	out->tv_sec = t;
-	out->tv_nsec = 0;
+	out->tv_sec = (time_t)sec;
+	out->tv_nsec = nsec;
 	return 0;
 }
