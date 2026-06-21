@@ -205,8 +205,17 @@ int main(void)
 	eq("day ago", ymd(2021, 6, 14, 12, 0, 0));
 	eq("hour ago", NOW.tv_sec - 3600);
 
-	bad("a week ago");  /* find's "a" -> midnight quirk, not replicated */
-	bad("an hour ago"); /* find rejects "an" too */
+	/* single letters are gnulib military timezones: A=+1h..Z=0, J=local.
+	 * A bare zone keeps now's wall-clock fields (no midnight), reinterpreted via
+	 * the zone — so "a week ago" (zone A) is "1 week ago" read as UTC+1. */
+	eq("a week ago", ymd(2021, 6, 8, 11, 0, 0)); /* 12:00 -7d, as +1 -> 11:00 UTC */
+	eq("z week ago", ymd(2021, 6, 8, 12, 0, 0)); /* Z = UTC */
+	eq("n week ago", ymd(2021, 6, 8, 13, 0, 0)); /* N = -1h */
+	eq("j week ago", ymd(2021, 6, 8, 12, 0, 0)); /* J = local (UTC0 here) */
+	eq("March 15 2020 12:00 A", ymd(2020, 3, 15, 11, 0, 0)); /* 12:00 +1 = 11 UTC */
+	eq("2020-03-15 12:00 Z", ymd(2020, 3, 15, 12, 0, 0));
+	bad("an hour ago"); /* find rejects "an" (two letters, not a military zone) */
+	bad("ab week ago"); /* a two-letter non-word is not a zone */
 	bad("2020");        /* find reads a bare 4-digit as HH:MM; we don't */
 
 	printf("frtdate: %d checks, %d failed\n", checks, fails);

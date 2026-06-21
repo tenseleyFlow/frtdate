@@ -37,21 +37,25 @@ Returns 0 on success, -1 if the string is not in the supported grammar.
   abbreviations; year defaults to the current year).
 - `M/D/Y` / `Y/M/D` — numeric slash dates (2- or 4-digit year, optional time).
 - `HH:MM[:SS]`, `Nam`/`Npm`/`N:MMpm` — time of day (today), 12-hour clock.
-- Timezones: numeric offsets (`+0500`, `+05:00`, `-0730`) and `UTC`/`GMT`/`UT`/`Z`.
+- Timezones: numeric offsets (`+0500`, `+05:00`, `-0730`), `UTC`/`GMT`/`UT`/`Z`,
+  and single-letter military zones `A`..`Z` (A=+1h…M=+12, N=−1…Y=−12, Z=0,
+  J=local). A bare zone keeps now's wall-clock fields and reinterprets them in
+  the zone, so `a week ago` is `1 week ago` read as zone A (UTC+1) — which is
+  exactly why find's `a week ago` differs from `1 week ago`. `an` is two letters,
+  not a zone, so it's rejected (as find does).
 - Combinations: `yesterday 10:00`, `Mar 15 2020 2:30pm`, `next fri 9:00`,
-  `2020-03-15T06:00:00+05:00`.
+  `2020-03-15T06:00:00+05:00`, `a week ago`.
 
 Offsets use `tm` + `mktime`, so month/year arithmetic and DST behave like find;
 an explicit timezone resolves via `timegm` minus the offset. Month and weekday
 names are English regardless of locale, as find's are.
 
-Returns -1 (matching find, which rejects most of these too): named timezones
-beyond UTC/GMT (`EST`, `PDT` — gnulib's full table interacts with the local zone,
-not portably reproducible), dashed/dotted numeric dates, ordinal days of month
-(`March 3rd`), 2-digit years in month-name dates (`March 15 20`), a bare 4-digit
-number as a clock time (`2020` → 20:20), and the `a`/`an` article (`a week ago`,
-which gnulib resolves to midnight). These are the quirky tail; the common forms
-are all covered.
+Returns -1 (matching find, which rejects most of these too): named multi-letter
+timezones beyond UTC/GMT (`EST`, `PDT` — gnulib's full table interacts with the
+local zone, not portably reproducible), dashed/dotted numeric dates, ordinal days
+of month (`March 3rd`), 2-digit years in month-name dates (`March 15 20`), and a
+bare 4-digit number as a clock time (`2020` → 20:20). The common forms are all
+covered.
 
 ## Build
 

@@ -68,6 +68,24 @@ static int zone_name(const char *w, int *off)
 	return 0;
 }
 
+/* Single-letter military timezone (gnulib military_table): A=+1h..I=+9h,
+ * K=+10..M=+12, N=-1h..Y=-12h, Z=0; J = local time. A timezone with no explicit
+ * clock time defaults to midnight, which is why "a week ago" (zone A) lands on
+ * midnight a week ago rather than now's time of day. Returns 0 (not a military
+ * letter), 1 (offset set in *off, seconds east of UTC), or 2 (J = local). */
+static int military_zone(const char *w, int *off)
+{
+	static const int h[26] = {1,  2,  3,  4,  5,  6,  7,  8,  9,  0 /*J*/, 10,
+				  11, 12, -1, -2, -3, -4, -5, -6, -7, -8, -9,
+				  -10, -11, -12, 0};
+	if (w[0] < 'a' || w[0] > 'z' || w[1] != '\0')
+		return 0;
+	if (w[0] == 'j')
+		return 2; /* local time */
+	*off = h[w[0] - 'a'] * 3600;
+	return 1;
+}
+
 /* A relative-date unit: which tm field it adjusts and a day-count multiplier
  * (week/fortnight fold onto tm_mday). Returns 1 if `w` names a unit. */
 static int reldate_unit(const char *w, int *field, long long *mult)
@@ -332,7 +350,16 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 				abs_mon = mon;
 				any = 1;
 			} else {
-				return -1; /* out of subset (timezone words, etc.) */
+				int mz = military_zone(w, &zoff); /* single-letter zone */
+				if (mz == 0)
+					return -1; /* out of subset */
+				if (mz == 1) { /* a real offset zone; J (mz==2) means local: no-op */
+					if (have_tz)
+						return -1; /* a second zone */
+					tz_off = zoff;
+					have_tz = 1;
+				}
+				any = 1;
 			}
 			continue;
 		}
@@ -391,8 +418,11 @@ static int parse_rel(const char *s, struct timespec now, long long *sec, long *n
 		tm.tm_min = t_min;
 		tm.tm_sec = t_sec;
 	} else if (have_date || have_wday) {
-		tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
+		tm.tm_hour = tm.tm_min = tm.tm_sec = 0; /* an absolute date/weekday with no time = midnight */
 	}
+	/* A bare timezone keeps now's wall-clock fields (no midnight); the zone only
+	 * reinterprets them below (timegm − offset), so "a week ago" = now's time of
+	 * day, a week back, read as zone A. */
 	if (have_date) {
 		tm.tm_mon = abs_mon - 1;
 		tm.tm_mday = abs_mday;
@@ -528,6 +558,16 @@ static int parse_iso(const char *s, long long *sec, long *nsec)
 			return -1;
 		tz = sgn * (th * 3600 + tmn * 60);
 		have_tz = 1;
+	} else if (isalpha((unsigned char)*p) && p[1] == '\0') {
+		char z[2] = {(char)tolower((unsigned char)*p), '\0'};
+		int zoff, mz = military_zone(z, &zoff);
+		if (mz == 0)
+			return -1;
+		if (mz == 1) { /* J (mz==2) = local: leave have_tz 0, use mktime */
+			tz = zoff;
+			have_tz = 1;
+		}
+		p++;
 	}
 	if (*p != '\0')
 		return -1; /* trailing junk */
